@@ -1,0 +1,2 @@
+The model scored a TEST RCE of: ('RCE', 29.6571545883621, False)
+The model scored an TEST AP of: ('AP', 0.7789938557956305, False)

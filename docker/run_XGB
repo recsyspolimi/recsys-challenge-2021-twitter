@@ -1,0 +1,160 @@
+#!/env/bin/python
+
+import lightgbm as lgb
+from complete_preprocess_script import do_preprocessing
+from complete_feature_extraction_script import do_feature_extraction
+from Scripts.Feature_extraction.feature_extraction_utilities import dataset_path, dict_path, temp_output_path, output_path
+import dask.dataframe as dd
+import os
+import pathlib as pl
+import pandas as pd
+import pickle
+import xgboost as xgb
+import pandas as pd
+
+'''
+On the remote machine there will be a /test folder with the raw dataset. This will be our data_path. 
+All the additional content, deriving from Preprocessing and Feature Extraction, will be placed in the /workflow folder (aka base). 
+Initially, there will be only 2 subfolders:
+- Dictionary: where all dicts, jsons and stuff from FE is placed
+- Models: where the models will be placed
+The base folder will grow while computing stuff, but during the preparation of then sub we don't care.
+We just need to create a workflow folder and under it the aforementioned subfolders with correct stuff inside. 
+As a peer of this of this folder, there should be the Scripts folder and the two complete-* scripts.
+'''
+
+
+def preprocess_dataset():
+
+    data_path = './test'
+    base_path = './workflow'
+    dict_path = os.path.join(base_path, 'Dictionary')
+    all_scripts = [
+        "pre00_dataset_to_parquet.py",
+        "pre01_map_user_id_features.py",
+        "pre02_map_media_features.py",
+        "pre03_map_link_id.py",
+        "pre04_map_domains_id.py",
+        "pre05_map_hashtags_id.py",
+        "pre06_map_languages_id.py",
+        #"pre07_map_tweet_id.py",
+        "pre08_map_tweet_type.py",
+        "pre09_timestamps.py",
+        "pre10_text_preprocessing.py",
+        "pre20_merge_all_mapped_features.py",
+        # ### "pre21_generate_subsample.py", # should not be used anymore
+        # "pre22_split_train_val.py"
+    ]
+
+    config = {
+        'original_dataset': os.path.join(data_path, 'part-*'),
+        'base_path': os.path.join(base_path, ''),
+        'temp_path': os.path.join(base_path, 'Temp'),
+        'dict_path': dict_path,
+        'train_val_ratio': [1, 0],
+        'dask_tmp_path': os.path.join(base_path, 'Temp', 'dask_tmp'),
+    }
+    print(config)
+
+    do_preprocessing(config, all_scripts, generate_dict=False, is_test=True)
+
+
+def extract_features():
+
+    base_path = './workflow'
+    dict_path = os.path.join(base_path, 'Dictionary')
+    data_path = os.path.join(base_path, 'Full_mapped_dataset')
+    all_scripts = [
+        'fe01_follower_features.py',
+        'fe02_user_hashtags.py',
+        'fe03_categorical_combo.py',
+        'fe20_merge_all_features.py',
+        'fe_32a_target_encoding_split_cols.py',
+        'fe_33_target_encoding_mapping.py'
+    ]
+
+    # define all config paths needed by the subscripts
+    config = {
+        'data_path': data_path,
+        'base_path': os.path.join(base_path, ''),
+        'temp_path': os.path.join(base_path, 'Temp'),
+        'preproc_dict_path': dict_path,
+        'dict_path': dict_path,
+        'dask_tmp_path': os.path.join(base_path, 'Temp', 'dask_tmp'),
+    }
+    print(config)
+
+    do_feature_extraction(config, all_scripts, generate_dict=False, is_test=True)
+
+
+def evaluate():
+    f = './part.0.parquet'
+    test = pd.read_parquet(f)
+    model_reply = pickle.load(open((dic_models['reply']), "rb"))
+    model_retweet = pickle.load(open((dic_models['retweet']), "rb"))
+    model_retweet_comment = pickle.load(open((dic_models['retweet_comment']), "rb"))
+    model_like = pickle.load(open((dic_models['like']), "rb"))
+
+    cols_when_model_builds = model_reply['booster'].feature_names
+    test = test[cols_when_model_builds]
+
+    df_tmp = dd.read_csv(BASE_DIR + '/*', sep='\x01', header=None, names=features)
+    drop = [c for c in df_tmp.columns if c not in ['tweet_id', 'b_user_id']]
+    df_tmp = df_tmp.drop(drop, axis=1)
+    df_tmp = df_tmp.compute()
+
+    dtest = xgb.DMatrix(test)
+    reply_pred = model_reply['booster'].predict(dtest)
+    retweet_pred = model_retweet['booster'].predict(dtest)
+    retweet_comment_pred = model_retweet_comment['booster'].predict(dtest)
+    like_pred = model_like['booster'].predict(dtest)
+
+    print('Predicting...')
+    i = 0
+    with open('results.csv', 'w') as output:
+        for index, row in df_tmp.iterrows():
+            reply_pred_i = reply_pred[i]
+            retweet_pred_i = retweet_pred[i]
+            retweet_comment_pred_i = retweet_comment_pred[i]
+            like_pred_i = like_pred[i]
+            tw_id = row['tweet_id']
+            u_id = row['b_user_id']
+            output.write(
+                f'{tw_id},{u_id},{reply_pred_i},{retweet_pred_i},{retweet_comment_pred_i},{like_pred_i}\n')
+            i = i + 1
+
+
+if __name__ == "__main__":
+    features = [
+        'text_tokens',  ###############
+        'hashtags',  # Tweet Features
+        'tweet_id',  #
+        'media',  #
+        'links',  #
+        'domains',  #
+        'tweet_type',  #
+        'language',  #
+        'timestamp',  ###############
+        'a_user_id',  ###########################
+        'a_follower_count',  # Engaged With User Features
+        'a_following_count',  #
+        'a_is_verified',  #
+        'a_account_creation',  ###########################
+        'b_user_id',  #######################
+        'b_follower_count',  # Engaging User Features
+        'b_following_count',  #
+        'b_is_verified',  #
+        'b_account_creation',  #######################
+        'b_follows_a',  ####################
+    ]
+
+    dic_models = {}
+    dic_models['reply'] = './workflow/Models/model_TE_base_text_offval_engagement_reply_timestamp'
+    dic_models['retweet'] = './workflow/Models/model_TE_base_text_offval_engagement_retweet_timestamp'
+    dic_models['retweet_comment'] = './workflow/Models/model_TE_base_text_offval_engagement_comment_timestamp'
+    dic_models['like'] = './workflow/Models/model_TE_base_text_offval_engagement_like_timestamp'
+
+    BASE_DIR = './test'
+    preprocess_dataset()
+    extract_features()
+    evaluate()

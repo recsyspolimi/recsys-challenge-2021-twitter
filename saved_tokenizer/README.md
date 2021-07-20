@@ -1,0 +1,1 @@
+In this directory we leave a stored compy of the BERTokenizer necessary to detokenize the text of the tweets 
