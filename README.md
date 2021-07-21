@@ -36,7 +36,7 @@ We participated in the challenge as Trial&Error, a team of 8 MSc students from P
 
 * **[Mattia Surricchio](https://github.com/mattiasu96)**
 
-We worked under the supervision of three PhD students:
+We worked under the supervision of:
 * **[Fernando B. Peréz Maurera](https://github.com/fernandobperezm)**
 * **[Cesare Bernardis](https://github.com/cesarebernardis)**
 * **[Maurizio Ferrari Dacrema](https://github.com/maurizioFD)**
